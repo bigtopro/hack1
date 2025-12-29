@@ -53,6 +53,74 @@ def install_and_check_packages():
 
     logger.info("✅ Required packages installed and checked")
 
+def cosine_deduplicate(
+    embeddings: np.ndarray,
+    ids: list,
+    texts: list,
+    similarity_threshold: float = 0.995
+) -> tuple[np.ndarray, list, list]:
+    """
+    Colab-optimized cosine-based deduplication.
+    Assumes embeddings are L2-normalized.
+    """
+    logger.info(f"🧹 Running cosine-based deduplication (threshold={similarity_threshold})...")
+
+    if len(embeddings) == 0:
+        logger.info("⚠️  No embeddings to deduplicate")
+        return embeddings, ids, texts
+
+    # Keep track of which embeddings to keep
+    keep_indices = []
+    kept_embeddings_list = []  # Use list to avoid quadratic growth
+
+    # Process embeddings sequentially
+    for i in tqdm(range(len(embeddings)), desc="Deduplicating"):
+        current_embedding = embeddings[i:i+1]  # Shape: (1, D)
+
+        if len(kept_embeddings_list) == 0:
+            # Always keep the first embedding
+            keep_indices.append(i)
+            kept_embeddings_list.append(current_embedding[0])  # Store as 1D array
+        else:
+            # Convert list to array for similarity computation
+            kept_embeddings = np.array(kept_embeddings_list)
+
+            # Compute similarities with already-kept embeddings (batched to manage memory)
+            duplicate = False
+            batch_size = 1024  # Process in batches to manage memory
+
+            for start_idx in range(0, len(kept_embeddings), batch_size):
+                end_idx = min(start_idx + batch_size, len(kept_embeddings))
+                batch_kept = kept_embeddings[start_idx:end_idx]
+
+                similarities = np.dot(batch_kept, current_embedding.T).flatten()
+
+                if np.max(similarities) >= similarity_threshold:
+                    duplicate = True
+                    break
+
+            if not duplicate:
+                # Keep this embedding as it's not similar to any kept embedding
+                keep_indices.append(i)
+                kept_embeddings_list.append(current_embedding[0])  # Store as 1D array
+
+    # Convert list back to array once at the end (linear time, not quadratic)
+    if kept_embeddings_list:
+        kept_embeddings = np.array(kept_embeddings_list)
+    else:
+        kept_embeddings = np.empty((0, embeddings.shape[1])) if len(embeddings.shape) > 1 else np.empty((0,))
+
+    # Extract the deduplicated results
+    dedup_embeddings = embeddings[keep_indices]
+    dedup_ids = [ids[i] for i in keep_indices]
+    dedup_texts = [texts[i] for i in keep_indices]
+
+    logger.info(f"🧹 Deduplication reduced comments from {len(embeddings)} → {len(dedup_embeddings)}")
+    if len(embeddings) > 0:
+        logger.info(f"🧠 Deduplication removed {(1 - len(dedup_embeddings)/len(embeddings))*100:.2f}% of comments")
+
+    return dedup_embeddings, dedup_ids, dedup_texts
+
 def mount_drive():
     """Mount Google Drive and handle Colab environment"""
     logger.info("Attempting to mount Google Drive...")
@@ -483,12 +551,20 @@ class CommentEmbedder:
         embeddings_array = np.vstack(all_embeddings)
         logger.info(f"✅ Embedding process completed. Array shape: {embeddings_array.shape}")
 
+        # Apply cosine deduplication to remove similar embeddings
+        dedup_embeddings, dedup_comment_ids, dedup_comments = cosine_deduplicate(
+            embeddings_array,
+            comment_ids,
+            comments,
+            similarity_threshold=0.995
+        )
+
         # Save embeddings and IDs to a compressed .npz file
         logger.info(f"💾 Saving embeddings to: {output_path}")
         np.savez_compressed(
             output_path,
-            embeddings=embeddings_array,
-            ids=comment_ids
+            embeddings=dedup_embeddings,
+            ids=dedup_comment_ids
         )
         logger.info(f"✅ Embeddings saved successfully")
 
@@ -500,7 +576,8 @@ class CommentEmbedder:
             "input_file": str(input_path),
             "output_file": str(output_path),
             "num_comments": len(comments),
-            "embedding_dim": embeddings_array.shape[1]
+            "num_deduplicated": len(dedup_comments),
+            "embedding_dim": dedup_embeddings.shape[1]
         }
 
         # Add optimization stats to result
@@ -508,7 +585,8 @@ class CommentEmbedder:
             result["optimization_stats"] = self.batch_optimizer.get_stats()
 
         logger.info(f"🎉 Successfully processed {input_path.name} -> {output_path.name}")
-        logger.info(f"   📊 Comments: {result['num_comments']:,}")
+        logger.info(f"   📊 Original comments: {result['num_comments']:,}")
+        logger.info(f"   📊 Deduplicated comments: {result['num_deduplicated']:,}")
         logger.info(f"   📐 Embedding dimension: {result['embedding_dim']}")
         logger.info(f"   💾 Output file size: {output_path.stat().st_size / (1024*1024):.2f} MB")
 
@@ -691,7 +769,13 @@ def main():
     logger.info("🚀 Starting Auto-Embedding Comments from Google Drive")
     logger.info("   Version: 1.0")
     logger.info("   Monitoring: Every 5 seconds")
-    logger.info("   Output directory: /content/drive/My Drive/youtubeComments/embed")
+
+    # Get configuration from environment variables with defaults
+    comments_dir = os.getenv('COMMENTS_DIR', '/content/drive/My Drive/youtubeComments')
+    embeddings_dir = os.getenv('EMBEDDINGS_DIR', '/content/drive/My Drive/youtubeComments/embed')
+    check_interval = int(os.getenv('CHECK_INTERVAL', '5'))
+
+    logger.info(f"   Output directory: {embeddings_dir}")
 
     # Install packages and check compatibility
     logger.info("📦 Installing required packages...")
@@ -710,8 +794,8 @@ def main():
     # Initialize the auto-embedding monitor
     logger.info("⚙️  Initializing Auto-Embedding Monitor...")
     monitor = AutoEmbeddingMonitor(
-        comments_dir="/content/drive/My Drive/youtubeComments",
-        embeddings_dir="/content/drive/My Drive/youtubeComments/embed"
+        comments_dir=comments_dir,
+        embeddings_dir=embeddings_dir
     )
 
     # Process any new files that are currently in the directory
@@ -722,15 +806,15 @@ def main():
     logger.info("\n" + "="*70)
     logger.info("🎯 STARTING CONTINUOUS MONITORING")
     logger.info("="*70)
-    logger.info("📁 Monitoring directory: /content/drive/My Drive/youtubeComments")
-    logger.info("💾 Output directory: /content/drive/My Drive/youtubeComments/embed")
-    logger.info("⏰ Check interval: Every 5 seconds")
+    logger.info(f"📁 Monitoring directory: {comments_dir}")
+    logger.info(f"💾 Output directory: {embeddings_dir}")
+    logger.info(f"⏰ Check interval: Every {check_interval} seconds")
     logger.info("🔄 New files will be automatically processed when uploaded")
     logger.info("🛑 To stop monitoring, use Ctrl+C or call monitor.stop_monitoring()")
     logger.info("="*70)
 
     logger.info("🚀 Starting monitoring service...")
-    monitor.start_monitoring(check_interval=5)  # Check every 5 seconds
+    monitor.start_monitoring(check_interval=check_interval)  # Check interval from environment
 
     # Keep the main thread alive
     try:

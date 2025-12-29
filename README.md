@@ -1,6 +1,6 @@
 # YouTube Comments Extractor
 
-A Java-based system for extracting comments directly from YouTube videos using the YouTube Data API. Given a YouTube video ID, the system efficiently extracts all comments (including replies) and saves them to a JSON file.
+A comprehensive system for extracting comments from YouTube videos and generating embeddings with automatic deduplication. The system includes both Java-based comment extraction and Python-based embedding generation.
 
 ## Features
 
@@ -10,11 +10,15 @@ A Java-based system for extracting comments directly from YouTube videos using t
 - **Comment cleaning**: Removes URLs and normalizes comment text
 - **Reply inclusion**: Fetches both top-level comments and their replies
 - **Caching**: Caches video information to minimize API calls
+- **Embedding generation**: Creates semantic embeddings for comments using transformer models
+- **Automatic deduplication**: Removes similar comments using cosine similarity
+- **Google Colab integration**: Monitors Google Drive for new comment files and processes them automatically
 
 ## Prerequisites
 
 - Java 8 or higher
 - Maven
+- Python 3.7+
 - YouTube Data API v3 keys
 
 ## Setup
@@ -33,6 +37,14 @@ YOUTUBE_API_KEY_2=your_actual_api_key_here
 YOUTUBE_API_KEY_3=your_actual_api_key_here
 YOUTUBE_API_KEY_4=your_actual_api_key_here
 # Add more keys as needed (up to YOUTUBE_API_KEY_20)
+```
+
+### Auto-Embedding Configuration
+The auto-embedding script uses the following environment variables:
+```
+COMMENTS_DIR=/content/drive/My Drive/youtubeComments
+EMBEDDINGS_DIR=/content/drive/My Drive/youtubeComments/embed
+CHECK_INTERVAL=5
 ```
 
 The system uses multiple API keys to handle rate limiting and quotas effectively. The more keys you provide, the more efficient the extraction process will be.
@@ -56,6 +68,19 @@ Add video IDs to `videoList.txt` (one per line), then run:
 mvn exec:java -Dexec.mainClass="com.lucy.YouTubeCommentsExtractor" -Dexec.args="videoList.txt"
 ```
 
+### Generate Embeddings with Auto-Deduplication
+Run the auto-embedding script in Google Colab to monitor a Google Drive folder and automatically generate embeddings for new comment files:
+
+```bash
+python auto_embed_comments_final.py
+```
+
+The script will:
+- Monitor the specified Google Drive folder for new comment JSON files
+- Generate semantic embeddings using the multilingual-e5-small model
+- Apply cosine-based deduplication to remove similar comments
+- Save the processed embeddings to the output directory
+
 ### Other Utilities
 
 - `ApiKeyTester.java` - Test your YouTube API keys
@@ -67,6 +92,8 @@ mvn exec:java -Dexec.mainClass="com.lucy.YouTubeCommentsExtractor" -Dexec.args="
 ## Output
 
 Comments are saved in the `comments/` directory as JSON files with the naming convention `{VIDEO_ID}_comments.json`. Each file contains an array of comment strings.
+
+Embeddings are saved as compressed `.npz` files with deduplication applied, containing both the embedding vectors and corresponding IDs.
 
 ## Project Structure
 
@@ -83,6 +110,7 @@ src/
 │   ├── YouTubeCommentsExtractor.java # Main extractor for YouTube videos
 │   ├── YouTubeSearchHelper.java    # YouTube video information helper
 │   └── YoutubeCommentScraper.java  # Core comment extraction
+auto_embed_comments_final.py        # Auto-embedding with deduplication for Google Colab
 ```
 
 ## Files
@@ -90,3 +118,4 @@ src/
 - `videoList.txt` - Input file with YouTube video IDs (one per line)
 - `comments/` - Output directory for extracted comments
 - `.env` - Environment file for API keys (not committed to git)
+- `auto_embed_comments_final.py` - Auto-embedding script with deduplication for Google Colab
