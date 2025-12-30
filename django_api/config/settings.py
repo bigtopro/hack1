@@ -76,6 +76,16 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 JAVA_PROJECT_DIR = BASE_DIR.parent
 COMMENTS_DIR = BASE_DIR.parent / 'comments'
 
+# Google Drive settings
+GOOGLE_DRIVE_CREDENTIALS_PATH = os.getenv('GOOGLE_DRIVE_CREDENTIALS_PATH', BASE_DIR.parent / 'credentials.json')
+GOOGLE_DRIVE_TOKEN_PATH = os.getenv('GOOGLE_DRIVE_TOKEN_PATH', BASE_DIR.parent / 'token.json')
+GOOGLE_DRIVE_COMMENTS_FOLDER = os.getenv('GOOGLE_DRIVE_COMMENTS_FOLDER', 'youtubeComments')
+GOOGLE_DRIVE_EMBED_FOLDER = os.getenv('GOOGLE_DRIVE_EMBED_FOLDER', 'youtubeComments/embed')
+
+# Local storage for downloaded results
+RESULTS_DIR = BASE_DIR.parent / 'results'
+RESULTS_DIR.mkdir(exist_ok=True)
+
 # REST Framework settings
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [

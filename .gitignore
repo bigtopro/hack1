@@ -61,6 +61,10 @@ django_api/**/*.pyc
 # Exhausted API keys file (Java)
 exhausted_keys.json
 
+# Google Drive credentials (sensitive)
+credentials.json
+token.json
+
 # Additional weird files
 *.bak
 *.backup

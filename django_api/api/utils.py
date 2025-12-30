@@ -40,6 +40,22 @@ def extract_comments(video_id: str, java_project_dir: Path, comments_dir: Path) 
     comments_dir.mkdir(parents=True, exist_ok=True)
     output_file = comments_dir / f"{video_id}_comments.json"
     
+    # Check if file already exists
+    if output_file.exists():
+        try:
+            with open(output_file, 'r', encoding='utf-8') as f:
+                comments = json.load(f)
+                return {
+                    'success': True,
+                    'file_path': str(output_file),
+                    'comment_count': len(comments),
+                    'output': 'File already exists, skipping extraction.',
+                    'cached': True
+                }
+        except:
+            # File exists but corrupted, re-extract
+            pass
+    
     # Change to Java project directory
     original_cwd = os.getcwd()
     try:
