@@ -1,351 +1,212 @@
+🔧 FEATURE SPEC SHEET
+Basic Summary Stats + Deduplication Impact Layer
+1. Goal of This Feature
 
----
+Add interpretable, numeric grounding to the analysis so users can answer:
 
-# ✅ FINAL MODIFICATION SPEC SHEET
+How do viewers feel overall?
 
-## Analysis → Report → Dashboard JSON → Dashboard Markdown
+Is this emotion widespread or just repetitive?
 
----
+Which clusters are emotionally consistent vs noisy?
 
-## 0. Objective (What This Change Achieves)
+What changed after deduplication, and why does that matter?
 
-From a **single analysis run**, the system must now produce **three synchronized outputs**:
+This data must be:
 
-1. **Full Analysis Report** (deep, narrative)
-   → `analysis_report_<timestamp>.md`
+Machine-readable (JSON)
 
-2. **Dashboard JSON** (structured, UI-ready)
-   → `analysis_dashboard_<timestamp>.json`
+Human-readable (Dashboard MD)
 
-3. **Dashboard Markdown Preview** (human-reviewable, mirrors UI)
-   → `analysis_dashboard_<timestamp>.md`
+Frontend-friendly (percentages, deltas, labels)
 
-All three are generated from the **same computed data**, not re-analysed.
-
----
-
-## 1. Output Artifacts (Final)
-
-| File                        | Purpose                             | Consumer |
-| --------------------------- | ----------------------------------- | -------- |
-| `analysis_report_*.md`      | Deep reasoning, demo, documentation | Humans   |
-| `analysis_dashboard_*.json` | Canonical analytics payload         | Frontend |
-| `analysis_dashboard_*.md`   | Review & QA of dashboard content    | You      |
-
-The **JSON is the source of truth** for the dashboard.
-The **dashboard MD is a formatted rendering of that JSON**.
-
----
-
-## 2. Dashboard JSON (Canonical Contract)
-
-The backend MUST produce this JSON structure:
-
-```json
-{
-  "meta": { ... },
-  "audience_overview": { ... },
-  "sentiment_overview": { ... },
-  "clusters": [ ... ],
-  "themes": [ ... ],
-  "opportunities": [ ... ],
-  "risks": [ ... ]
+2. New JSON Section: summary_stats
+Add to top-level dashboard JSON
+"summary_stats": {
+  "overall_sentiment": { ... },
+  "deduplication_impact": { ... },
+  "cluster_sentiment_stats": [ ... ]
 }
-```
 
-Everything below builds on this.
 
----
+This section feeds:
 
-## 3. Confidence Marker Logic (REQUIRED, Structural)
+dashboard header widgets
 
-Implement once, reuse everywhere.
+explanation tooltips
 
-```python
-def confidence_label(cluster_size, entropy):
-    if cluster_size >= 250 and entropy < 1.0:
-        return "high"
-    if cluster_size >= 120 and entropy < 1.5:
-        return "medium"
-    return "low"
-```
+trust signals
 
-Use this for:
+3. Overall Sentiment Breakdown (Percentages)
+Source
 
-* clusters
-* themes
-* opportunities
-* risks
+Raw sentiment → all sentiment JSON
 
-This builds **trust without probabilities**.
+Semantic sentiment → deduplicated IDs only
 
----
-
-## 4. Sampling Logic (FINAL, LOCKED)
-
-### For each cluster:
-
-| Cluster size | Total samples |
-| ------------ | ------------- |
-| Large        | 12            |
-| Medium       | 10            |
-| Small        | 8             |
-
-### Selection method:
-
-* **70% closest to centroid** (core signal)
-* **30% furthest from centroid** (edge cases)
-
-```python
-n_core = int(n_samples * 0.7)
-n_edge = n_samples - n_core
-
-core = sorted_by_distance[:n_core]
-edge = sorted_by_distance[-n_edge:]
-```
-
-Store samples in JSON as:
-
-```json
-"sample_comments": {
-  "centroid": [...],
-  "edge_cases": [...]
+JSON structure
+"overall_sentiment": {
+  "raw": {
+    "joy": 34.2,
+    "interest": 28.1,
+    "confusion": 17.4,
+    "anger": 11.0,
+    "other": 9.3
+  },
+  "semantic": {
+    "joy": 26.8,
+    "interest": 31.5,
+    "confusion": 22.4,
+    "anger": 12.1,
+    "other": 7.2
+  },
+  "dominant_raw": "joy",
+  "dominant_semantic": "interest"
 }
-```
 
----
+Why this matters
 
-## 5. Dashboard JSON – Section Details
+Raw = emotional volume
 
-### 5.1 Meta
+Semantic = emotional diversity
 
-```json
-"meta": {
-  "video_id": "DWCl2dN6hpg",
-  "total_comments": 11788,
-  "unique_comments": 983,
-  "analysis_timestamp": "2025-12-30T12:13:30Z",
-  "model": "llama-3.1-8b-instant"
-}
-```
+Differences tell a story by themselves
 
----
+4. Deduplication Impact (Critical Trust Builder)
+Compute
 
-### 5.2 Audience Overview (Top Chart)
+For each emotion:
 
-```json
-"audience_overview": {
-  "cluster_distribution": [
+delta = semantic_pct - raw_pct
+
+JSON structure
+"deduplication_impact": {
+  "compression_ratio": 0.083,
+  "emotion_shifts": [
     {
-      "cluster_id": 0,
-      "label": "Video quality",
-      "comment_count": 342,
-      "percentage": 29.1,
-      "dominant_sentiment": "joy",
-      "confidence": "high"
+      "emotion": "joy",
+      "raw_pct": 34.2,
+      "semantic_pct": 26.8,
+      "delta": -7.4,
+      "interpretation": "High repetition of similar positive reactions"
+    },
+    {
+      "emotion": "confusion",
+      "raw_pct": 17.4,
+      "semantic_pct": 22.4,
+      "delta": +5.0,
+      "interpretation": "Fewer comments, but many distinct confusion reasons"
     }
   ]
 }
-```
 
----
+Interpretation rules (deterministic, no LLM)
 
-### 5.3 Sentiment Overview
+Semantic ↓ vs Raw → repetition / echoing
 
-```json
-"sentiment_overview": {
-  "distribution": {
-    "joy": 34,
-    "interest": 28,
-    "confusion": 17,
-    "anger": 11,
-    "other": 10
-  },
-  "dominant_sentiment": "joy",
-  "sentiment_entropy": 1.38
-}
-```
+Semantic ↑ vs Raw → diverse, structurally important
 
-Computed from **non-deduplicated sentiment JSON**.
+Large deltas (>±4%) → highlight-worthy
 
----
-
-### 5.4 Clusters (Main Cards)
-
-```json
+5. Per-Cluster Sentiment Breakdown
+Add to each cluster object
 {
   "cluster_id": 2,
   "label": "Pacing and duration",
   "comment_count": 187,
-  "percentage": 15.9,
-  "sentiment_distribution": {
+  "sentiment_breakdown": {
     "interest": 41,
     "confusion": 27,
     "joy": 18,
     "anger": 9,
     "other": 5
   },
-  "entropy": 1.42,
-  "confidence": "medium",
-  "summary": "Mixed feedback on pacing, with tension between depth and conciseness.",
-  "sample_comments": {
-    "centroid": [...],
-    "edge_cases": [...]
-  }
+  "dominant_sentiment": "interest",
+  "sentiment_entropy": 1.42,
+  "confidence": "medium"
 }
-```
 
----
+Notes
 
-### 5.5 Themes (LLM, Structured)
+Percentages must sum to ~100
 
-```json
-{
-  "theme": "Advanced examples",
-  "why": "Repeated requests indicate unmet learning depth",
-  "implication": "Audience is maturing faster than content",
-  "recommended_action": "Create advanced follow-up series",
-  "confidence": "high"
+Use semantic data only
+
+This powers:
+
+stacked bars
+
+cluster emotion badges
+
+hover tooltips
+
+6. Cluster-Level Deduplication Insight (Optional but Powerful)
+Derived metric
+cluster_raw_mentions / cluster_unique_comments
+
+JSON
+"deduplication_signal": {
+  "cluster_id": 2,
+  "raw_mentions": 612,
+  "unique_comments": 187,
+  "repetition_factor": 3.27,
+  "interpretation": "Many viewers repeat similar pacing concerns"
 }
-```
 
----
+Display use
 
-### 5.6 Opportunities vs Risks
+“Echo chamber” indicator
 
-```json
-"opportunities": [
-  {
-    "type": "content_expansion",
-    "signal": "High engagement on advanced topics",
-    "action": "Launch advanced tutorial series",
-    "confidence": "high"
-  }
-]
-```
+Helps explain why some issues feel louder
 
-```json
-"risks": [
-  {
-    "type": "production_quality",
-    "signal": "Audio complaints in outdoor segments",
-    "impact": "Reduced retention",
-    "confidence": "medium"
-  }
-]
-```
+7. Dashboard Markdown Additions
+Add section near top
+## Sentiment Snapshot
 
----
+**Overall viewer emotions (raw):**
+- Joy: 34.2%
+- Interest: 28.1%
+- Confusion: 17.4%
+- Anger: 11.0%
 
-## 6. NEW: Dashboard Markdown (`analysis_dashboard_*.md`)
+**After semantic deduplication:**
+- Interest becomes dominant (31.5%)
+- Confusion increases (+5.0%), indicating diverse reasons
+- Joy decreases (−7.4%), indicating repetition
 
-### Purpose
+**What this means:**
+Raw sentiment reflects volume.
+Semantic sentiment reflects diversity of reasons.
 
-* Human-readable
-* Mirrors UI
-* Generated **from the JSON**
-* No LLM calls
+Add per-cluster snippet
+**Emotional makeup:**
+- Interest (41%)
+- Confusion (27%)
+- Joy (18%)
 
----
+**Interpretation:**  
+This topic attracts curiosity but also unresolved questions.
 
-## 7. Dashboard Markdown Structure (MANDATORY)
+8. UI Elements This Unlocks
 
-```md
-# Audience Insights Dashboard
+You can now safely add:
 
-## Overview
-- Total comments: 11,788
-- Unique comments (deduplicated): 983
-- Dominant sentiment: Joy
-- Analysis confidence: High
+📊 Raw vs Semantic sentiment toggle
 
----
+🔁 Deduplication impact tooltip
 
-## Audience Signals at a Glance
-| Theme | % of Comments | Dominant Emotion | Confidence |
-|-----|--------------|------------------|------------|
-| Video quality | 29.1% | Joy | High |
-| Topic depth | 25.3% | Interest | High |
-| Pacing | 15.9% | Mixed | Medium |
+🧠 “Emotion diversity” badges
 
----
+⚠️ High-repetition warning on clusters
 
-## Discussion Clusters
+🧪 Confidence labels users can trust
 
-### Video Quality & Production (High confidence)
-**Summary:** Viewers praise visuals and editing quality.
+9. What NOT to Do
 
-**Core comments:**
-- ...
-- ...
+❌ Do not LLM-generate percentages
 
-**Edge cases:**
-- ...
+❌ Do not hide deduplication effects
 
----
+❌ Do not collapse raw + semantic into one number
 
-## Common Ideas & Themes
-- High engagement around practical examples
-- Requests for advanced follow-up content
-
----
-
-## Opportunities
-- 🚀 Create an advanced tutorial series (High confidence)
-- 📈 Add downloadable resources (Medium confidence)
-
----
-
-## Risks
-- ⚠️ Audio quality issues in outdoor segments (Medium confidence)
-```
-
-This file should feel like **a readable version of your dashboard**.
-
----
-
-## 8. Implementation Rule (IMPORTANT)
-
-* JSON is built first
-* Markdown dashboard is rendered from JSON
-* No duplicated logic
-
-```python
-dashboard_json = build_dashboard_json(...)
-dashboard_md = render_dashboard_md(dashboard_json)
-```
-
----
-
-## 9. LLM Usage (No Change)
-
-* Same prompts
-* Same rate limits
-* Same truncation
-* No extra calls
-
-This change adds **zero LLM cost**.
-
----
-
-## 10. What NOT to Do
-
-* ❌ Do not let MD and JSON diverge
-* ❌ Do not regenerate text via LLM for dashboard MD
-* ❌ Do not add more comments to prompts
-* ❌ Do not increase token budgets
-
----
-
-## 11. Final Outcome
-
-After this spec:
-
-* You can **review dashboard content instantly**
-* Frontend has **clean, predictable data**
-* Confidence markers build trust
-* Sampling quality improves insight depth
-* System is product-ready
-
----
-
+❌ Do not over-explain — let numbers speak first

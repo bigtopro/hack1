@@ -81,9 +81,9 @@ JSON array of objects with:
 ## Analysis Report Structure
 
 The generated report includes:
-1. Overall Viewer Sentiment (raw vs semantic)
+1. Overall Viewer Sentiment (volume-based)
 2. Key Emotional Drivers
-3. Topic-Level Emotional Impact
+3. Selected Topic Analysis
 4. Engagement Diagnostics
 5. Actionable Insights
 6. Recommendations
@@ -99,7 +99,8 @@ The system now generates three synchronized outputs:
 2. **Dashboard JSON** (`analysis_dashboard_*.json`)
    - Structured, UI-ready data
    - Canonical analytics payload
-   - Confidence markers for all insights
+   - Emotion-first structure with confidence markers
+   - Focus on emotional drivers and reasons
 
 3. **Dashboard Markdown** (`analysis_dashboard_*.md`)
    - Human-readable dashboard preview
@@ -107,6 +108,14 @@ The system now generates three synchronized outputs:
    - For review and QA
 
 All three outputs are generated from the same analysis run, ensuring consistency.
+
+## Key Changes from Previous Versions
+
+- **Emotion-First Analysis**: The system now prioritizes understanding why viewers feel certain emotions rather than focusing on deduplication
+- **Cluster-Based Insights**: Analysis focuses on semantic clusters to understand different reasons behind emotions
+- **Improved Confidence Scoring**: Confidence levels now incorporate entropy calculations for more accurate assessments
+- **Simplified Dashboard**: Dashboard structure is now emotion-centric with clearer organization
+- **Better Performance**: Removed deduplication step for faster processing while maintaining insight quality
 
 ## Stopping the Engine
 
