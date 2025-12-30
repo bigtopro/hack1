@@ -8,6 +8,7 @@ from django.conf import settings
 from pathlib import Path
 import os
 import json
+import logging
 from .utils import (
     extract_video_id_from_url,
     get_comments_from_file,
@@ -36,6 +37,8 @@ from .sentiment_utils import (
     combine_clusters_and_emotions,
     EMOTIONS_27
 )
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
@@ -410,60 +413,82 @@ def sentiment_analysis_view(request, video_id):
 def get_analysis_dashboard_view(request, video_id):
     """
     Get the analysis dashboard JSON for a specific video
-
+    
     GET /api/dashboard/{video_id}/
+    
+    Returns the complete analysis dashboard data from analysis_dashboard_*.json files
     """
     try:
-        # Look for the dashboard JSON file in the Downloads directory
-        # The analysis engine saves files with timestamp in the name
-        import glob
-        import os
-        from django.conf import settings
-        from pathlib import Path
+        # Check analysis results directory first
+        from django.conf import settings as django_settings
+        analysis_dir = getattr(settings, 'ANALYSIS_RESULTS_DIR', Path(settings.JAVA_PROJECT_DIR) / 'analysis results')
         
-        # Search for dashboard files in the Downloads directory
-        download_dir = Path("/Users/venuvamsi/Downloads")  # Default path from analysis_engine.py
-        dashboard_files = list(download_dir.glob(f"analysis_dashboard_{video_id}_*.json"))
+        # Also check results directory and Downloads as fallback
+        search_dirs = [
+            analysis_dir,
+            settings.RESULTS_DIR,
+            Path("/Users/venuvamsi/Downloads"),  # Default from analysis_engine.py
+        ]
         
-        # If not found in Downloads, also check the results directory
+        dashboard_files = []
+        
+        # Search for all dashboard JSON files
+        for search_dir in search_dirs:
+            if search_dir.exists():
+                dashboard_files.extend(list(search_dir.glob("analysis_dashboard_*.json")))
+        
         if not dashboard_files:
-            results_dir = settings.RESULTS_DIR
-            dashboard_files = list(results_dir.glob(f"analysis_dashboard_{video_id}_*.json"))
-        
-        # If still not found, look for any dashboard file with the video_id pattern
-        if not dashboard_files:
-            dashboard_files = list(download_dir.glob(f"*analysis_dashboard*{video_id}*.json"))
-            if not dashboard_files:
-                dashboard_files = list(settings.RESULTS_DIR.glob(f"*analysis_dashboard*{video_id}*.json"))
-        
-        # If still not found, look for the most recent dashboard file
-        if not dashboard_files:
-            all_dashboard_files = list(download_dir.glob("analysis_dashboard_*.json")) + \
-                                 list(settings.RESULTS_DIR.glob("analysis_dashboard_*.json"))
-            if all_dashboard_files:
-                # Get the most recent dashboard file
-                import os
-                dashboard_files = [max(all_dashboard_files, key=os.path.getctime)]
-        
-        if dashboard_files:
-            dashboard_file = dashboard_files[0]  # Take the first (or most recent) file
-            with open(dashboard_file, "r") as f:
-                dashboard_data = json.load(f)
-            
-            return Response({
-                "video_id": video_id,
-                "dashboard_data": dashboard_data,
-                "file_path": str(dashboard_file),
-                "status": "success"
-            }, status=status.HTTP_200_OK)
-        else:
             return Response({
                 "error": f"Analysis dashboard not found for video {video_id}",
-                "message": "The analysis may not have completed yet or the dashboard file is missing.",
+                "message": "No analysis dashboard files found. Run analysis first.",
                 "video_id": video_id
             }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Find the dashboard file that matches the video_id
+        matching_file = None
+        for dashboard_file in sorted(dashboard_files, key=lambda x: x.stat().st_mtime, reverse=True):
+            try:
+                with open(dashboard_file, "r", encoding='utf-8') as f:
+                    dashboard_data = json.load(f)
+                
+                # Check if the video_id matches in the meta field
+                if dashboard_data.get('meta', {}).get('video_id') == video_id:
+                    matching_file = dashboard_file
+                    break
+            except (json.JSONDecodeError, KeyError, IOError):
+                continue
+        
+        # If no exact match, return the most recent file (might be for this video)
+        if not matching_file:
+            matching_file = max(dashboard_files, key=lambda x: x.stat().st_mtime)
+            with open(matching_file, "r", encoding='utf-8') as f:
+                dashboard_data = json.load(f)
+            
+            # Warn if video_id doesn't match
+            file_video_id = dashboard_data.get('meta', {}).get('video_id', 'unknown')
+            if file_video_id != video_id:
+                return Response({
+                    "error": f"Analysis dashboard not found for video {video_id}",
+                    "message": f"Found dashboard for video {file_video_id} instead. Request the correct video_id.",
+                    "video_id": video_id,
+                    "found_video_id": file_video_id
+                }, status=status.HTTP_404_NOT_FOUND)
+        else:
+            with open(matching_file, "r", encoding='utf-8') as f:
+                dashboard_data = json.load(f)
+        
+        # Return the complete dashboard data directly (frontend expects this structure)
+        # Merge meta info into the dashboard data for convenience
+        dashboard_data['api_meta'] = {
+            "file_path": str(matching_file),
+            "fetched_at": dashboard_data.get('meta', {}).get('analysis_timestamp')
+        }
+        
+        # Return dashboard data directly so frontend can use it immediately
+        return Response(dashboard_data, status=status.HTTP_200_OK)
     
     except Exception as e:
+        logger.error(f"Error loading dashboard for {video_id}: {e}")
         return Response({
             "error": str(e),
             "video_id": video_id
