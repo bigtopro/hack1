@@ -13,6 +13,9 @@ target/
 *.ipr
 *.iws
 .vscode/
+*.swp
+*.swo
+*~
 
 # OS generated files
 .DS_Store
@@ -31,3 +34,62 @@ local.properties
 
 # Comments output directory
 comments/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Django
+django_api/db.sqlite3
+django_api/db.sqlite3-journal
+django_api/*.log
+django_api/local_settings.py
+django_api/staticfiles/
+django_api/media/
+django_api/**/__pycache__/
+django_api/**/*.pyc
+
+# Exhausted API keys file (Java)
+exhausted_keys.json
+
+# Google Drive credentials (sensitive)
+credentials.json
+token.json
+
+# Additional weird files
+*.bak
+*.backup
+*.orig
+*.rej
+*.swo
+*.swp
+*~
+.#*
+#*#
+.*.swp
+*.pid
+*.seed
+*.pid.lock
+.npm
+.node_repl_history
+*.tgz
+*.tar.gz
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+*.egg-info/
+dist/
+build/
+*.egg
