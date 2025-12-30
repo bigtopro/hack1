@@ -11,5 +11,7 @@ urlpatterns = [
     path('embedding/<str:video_id>/status/', views.check_embedding_status_view, name='check-embedding-status'),
     path('embedding/<str:video_id>/download/', views.download_results_view, name='download-results'),
     path('sentiment/<str:video_id>/', views.sentiment_analysis_view, name='sentiment-analysis'),
+    path('dashboard/<str:video_id>/', views.get_analysis_dashboard_view, name='get-analysis-dashboard'),
+    path('analyze/<str:video_id>/', views.trigger_analysis_view, name='trigger-analysis'),
 ]
 

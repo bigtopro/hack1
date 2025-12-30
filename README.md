@@ -117,6 +117,75 @@ All three outputs are generated from the same analysis run, ensuring consistency
 - **Simplified Dashboard**: Dashboard structure is now emotion-centric with clearer organization
 - **Better Performance**: Removed deduplication step for faster processing while maintaining insight quality
 
+## Frontend Integration
+
+The project now includes a modern React-based frontend for visualizing the analysis results. The frontend is located in the `frontend/` directory.
+
+### Frontend Setup
+
+1. Navigate to the frontend directory:
+   ```bash
+   cd frontend
+   ```
+
+2. Install frontend dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+The frontend will be available at `http://localhost:5173`.
+
+### Frontend Features
+
+- Modern dark-themed UI with glassmorphism effects
+- Real-time visualization of comment analysis results
+- Interactive charts showing cluster distribution
+- Discussion clusters organized by themes
+- Common ideas and themes extraction
+- Opportunities and signals identification
+
+### Backend Integration
+
+To connect the frontend to the backend analysis engine:
+
+1. The backend generates JSON dashboard files in the Downloads directory
+2. The frontend needs to be updated to fetch these files from the appropriate endpoint
+3. Modify the `handleAnalyze` function in `frontend/src/App.tsx` to make API calls to the backend
+
+### Building for Production
+
+To create a production build of the frontend:
+```bash
+npm run build
+```
+
+## Running the Fullstack Application
+
+To run both the Django API backend and React frontend together:
+
+1. Make sure you have both the Django API and frontend dependencies installed:
+   ```bash
+   # For Django API (in django_api directory)
+   pip install -r requirements.txt
+
+   # For React frontend (in frontend directory)
+   npm install
+   ```
+
+2. Run the fullstack application:
+   ```bash
+   ./run_fullstack.sh
+   ```
+
+This will start both servers:
+- Django API at `http://localhost:8000`
+- React frontend at `http://localhost:5173` (or as shown in the terminal)
+
 ## Stopping the Engine
 
 Press `Ctrl+C` to stop the monitoring process.

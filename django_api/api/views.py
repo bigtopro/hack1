@@ -7,6 +7,7 @@ from rest_framework import status
 from django.conf import settings
 from pathlib import Path
 import os
+import json
 from .utils import (
     extract_video_id_from_url,
     get_comments_from_file,
@@ -14,7 +15,7 @@ from .utils import (
     extract_comments
 )
 from .serializers import (
-    ExtractCommentsSerializer, 
+    ExtractCommentsSerializer,
     CommentFileSerializer,
     EmbeddingStatusSerializer,
     DownloadResultsSerializer,
@@ -401,5 +402,154 @@ def sentiment_analysis_view(request, video_id):
     except Exception as e:
         return Response({
             'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+@api_view(["GET"])
+def get_analysis_dashboard_view(request, video_id):
+    """
+    Get the analysis dashboard JSON for a specific video
+
+    GET /api/dashboard/{video_id}/
+    """
+    try:
+        # Look for the dashboard JSON file in the Downloads directory
+        # The analysis engine saves files with timestamp in the name
+        import glob
+        import os
+        from django.conf import settings
+        from pathlib import Path
+        
+        # Search for dashboard files in the Downloads directory
+        download_dir = Path("/Users/venuvamsi/Downloads")  # Default path from analysis_engine.py
+        dashboard_files = list(download_dir.glob(f"analysis_dashboard_{video_id}_*.json"))
+        
+        # If not found in Downloads, also check the results directory
+        if not dashboard_files:
+            results_dir = settings.RESULTS_DIR
+            dashboard_files = list(results_dir.glob(f"analysis_dashboard_{video_id}_*.json"))
+        
+        # If still not found, look for any dashboard file with the video_id pattern
+        if not dashboard_files:
+            dashboard_files = list(download_dir.glob(f"*analysis_dashboard*{video_id}*.json"))
+            if not dashboard_files:
+                dashboard_files = list(settings.RESULTS_DIR.glob(f"*analysis_dashboard*{video_id}*.json"))
+        
+        # If still not found, look for the most recent dashboard file
+        if not dashboard_files:
+            all_dashboard_files = list(download_dir.glob("analysis_dashboard_*.json")) + \
+                                 list(settings.RESULTS_DIR.glob("analysis_dashboard_*.json"))
+            if all_dashboard_files:
+                # Get the most recent dashboard file
+                import os
+                dashboard_files = [max(all_dashboard_files, key=os.path.getctime)]
+        
+        if dashboard_files:
+            dashboard_file = dashboard_files[0]  # Take the first (or most recent) file
+            with open(dashboard_file, "r") as f:
+                dashboard_data = json.load(f)
+            
+            return Response({
+                "video_id": video_id,
+                "dashboard_data": dashboard_data,
+                "file_path": str(dashboard_file),
+                "status": "success"
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                "error": f"Analysis dashboard not found for video {video_id}",
+                "message": "The analysis may not have completed yet or the dashboard file is missing.",
+                "video_id": video_id
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    except Exception as e:
+        return Response({
+            "error": str(e),
+            "video_id": video_id
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["POST"])
+def trigger_analysis_view(request, video_id):
+    """
+    Trigger the analysis engine for a specific video
+
+    POST /api/analyze/{video_id}/
+    """
+    try:
+        # Import the analysis engine
+        import sys
+        from pathlib import Path
+        
+        # Add the parent directory to the Python path to import analysis_engine
+        parent_dir = Path(__file__).resolve().parent.parent.parent
+        sys.path.insert(0, str(parent_dir))
+        
+        from analysis_engine import CommentAnalysisEngine
+        
+        # Find the required files for analysis
+        # Look for .npz and _sentiments.json files
+        download_dir = Path("/Users/venuvamsi/Downloads")  # Default path from analysis_engine.py
+        results_dir = settings.RESULTS_DIR
+        
+        # Look for clustering file (.npz)
+        clustering_files = list(download_dir.glob(f"{video_id}*.npz")) + \
+                          list(results_dir.glob(f"{video_id}*.npz"))
+        if not clustering_files:
+            clustering_files = list(download_dir.glob(f"*{video_id}*.npz")) + \
+                              list(results_dir.glob(f"*{video_id}*.npz"))
+        
+        # Look for sentiment file (_sentiments.json)
+        sentiment_files = list(download_dir.glob(f"{video_id}*_sentiments.json")) + \
+                         list(results_dir.glob(f"{video_id}*_sentiments.json"))
+        if not sentiment_files:
+            sentiment_files = list(download_dir.glob(f"*{video_id}*_sentiments.json")) + \
+                             list(results_dir.glob(f"*{video_id}*_sentiments.json"))
+        
+        if not clustering_files:
+            return Response({
+                "error": f"Clustering file (.npz) not found for video {video_id}",
+                "message": "Run clustering and embedding first to generate the .npz file",
+                "video_id": video_id
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        if not sentiment_files:
+            return Response({
+                "error": f"Sentiment file (_sentiments.json) not found for video {video_id}",
+                "message": "Run sentiment analysis first to generate the _sentiments.json file",
+                "video_id": video_id
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get the first available files
+        clustering_file = clustering_files[0]
+        sentiment_file = sentiment_files[0]
+        
+        # Initialize the analysis engine
+        api_key = os.getenv("GROQ_API_KEY")
+        engine = CommentAnalysisEngine(download_dir=str(download_dir), api_key=api_key)
+        
+        # Run the analysis
+        engine.process_analysis(clustering_file, sentiment_file)
+        
+        return Response({
+            "video_id": video_id,
+            "status": "analysis_completed",
+            "message": "Analysis completed successfully",
+            "clustering_file": str(clustering_file),
+            "sentiment_file": str(sentiment_file)
+        }, status=status.HTTP_200_OK)
+    
+    except ImportError as e:
+        return Response({
+            "error": f"Failed to import analysis engine: {str(e)}",
+            "message": "Make sure analysis_engine.py is available in the project root",
+            "video_id": video_id
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    except Exception as e:
+        return Response({
+            "error": str(e),
+            "video_id": video_id
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
