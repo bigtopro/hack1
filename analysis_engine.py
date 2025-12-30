@@ -88,26 +88,30 @@ Output format:
 - 1 short paragraph: overall emotional tone
 - 3–5 bullet points: key takeaways"""
         
-        self.emotion_cluster_reason_prompt = """You are analyzing viewer comments that all express the same emotion: {EMOTION}.
+        self.emotion_cluster_reason_prompt = """You are analyzing viewer comments that all express the emotion: {EMOTION}.
 
-The comments are grouped into distinct semantic clusters.
-Each cluster represents a different underlying reason for this emotion.
+The comments come from different semantic clusters.
+Each cluster represents a different underlying reason.
 
 Your task:
-- Identify the main reason behind each cluster.
-- Explain how these reasons differ from one another.
-- Focus on causes, not solutions.
+- Identify the main reasons why viewers feel this emotion
+- Explain how these reasons differ
+- Focus on causes, not cluster structure
 
-Rules:
-- Do NOT merge clusters unless they are clearly the same reason.
-- Do NOT generalize across clusters.
-- Treat each cluster as a separate emotional driver.
+Do NOT label clusters.
+Do NOT mention cluster IDs.
+Do NOT output JSON.
+Use short paragraphs with clear headings.
 
-Output format:
-- Section title: "Reasons for {EMOTION}"
-- For each cluster:
-  - Short label for the reason
-  - 2–3 sentence explanation grounded in the comments"""
+Frame your explanation using one or more of these lenses where relevant:
+- expectation vs outcome
+- clarity vs confusion
+- effort vs reward
+- inclusion vs exclusion
+- fairness vs luck
+
+End your explanation with one sentence describing
+why this emotion matters for viewer engagement or perception."""
         
         self.cluster_sentiment_mix_prompt = """You are analyzing a single discussion topic derived from viewer comments.
 
@@ -202,30 +206,25 @@ Output format:
         if elapsed < MIN_DELAY_SEC:
             time.sleep(MIN_DELAY_SEC - elapsed)
 
-        # Retry with exponential backoff
-        for attempt in range(3):
-            try:
-                response = self.llm.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[
-                        {"role": "system", "content": self.global_system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=300  # 🔒 HARD LIMIT
-                )
+        # Single attempt only - no retries for JSON parsing
+        try:
+            response = self.llm.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": self.global_system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=450  # 🔒 HARD LIMIT - raised from 300 to reduce truncation
+            )
 
-                # Update last call time
-                self._last_llm_call = time.time()
+            # Update last call time
+            self._last_llm_call = time.time()
 
-                return response.choices[0].message.content
-            except Exception as e:
-                wait = 2 ** attempt
-                logger.warning(f"LLM call failed (attempt {attempt+1}), retrying in {wait}s: {e}")
-                if attempt < 2:  # Don't sleep after the last attempt
-                    time.sleep(wait)
-
-        return "LLM failed after retries"
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.warning(f"LLM call failed: {e}")
+            return "LLM call failed"
 
     def monitor_and_analyze(self):
         """Monitor the download directory and start analysis when both files are present"""
@@ -470,7 +469,7 @@ Cluster-weighted sentiment distribution (topic-level diversity): {cluster_weight
             response = self._call_llm(prompt)
             return str(response)
         except Exception as e:
-            logger.error(f"Error generating global sentiment summary: {e}")
+            logger.warning(f"Error generating global sentiment summary: {e}")
             return f"Error generating summary: {e}"
 
     def _analyze_emotion_clusters(self, cluster_sentiment_map: Dict,
@@ -492,6 +491,9 @@ Cluster-weighted sentiment distribution (topic-level diversity): {cluster_weight
             for emotions in cluster_sentiment_map.values():
                 all_emotions.update(emotions)
             emotions_to_analyze = list(all_emotions)
+
+        # Get the raw sentiment distribution from the instance variable
+        raw_sentiment_dist = self.raw_sentiment_data["distribution"] if hasattr(self, 'raw_sentiment_data') and self.raw_sentiment_data else {}
 
         for emotion in emotions_to_analyze:
             # Find clusters that have this emotion
@@ -533,92 +535,103 @@ Cluster-weighted sentiment distribution (topic-level diversity): {cluster_weight
             sorted_clusters = sorted(emotion_clusters.items(), key=lambda x: x[1], reverse=True)
             selected_clusters = dict(sorted_clusters[:5])  # Select top 5 clusters max
 
-            # Build cluster blocks for prompt
-            cluster_blocks = []
+            # Build comment blocks for prompt (without cluster labels)
+            comment_blocks = []
             for cluster_id in selected_clusters.keys():
                 cluster_data = cluster_analysis[cluster_id]
-                cluster_block = f"Cluster {cluster_id} (size: {cluster_data['size']}):\n"
+                comment_block = f"Comments ({cluster_data['size']} total):\n"
                 for comment in cluster_data['comments'][:8]:  # Limit to 8 comments max
-                    cluster_block += f"- {comment}\n"
-                cluster_blocks.append(cluster_block.strip())
+                    comment_block += f"- {comment}\n"
+                comment_blocks.append(comment_block.strip())
 
             # Build the prompt with the new format
-            cluster_blocks_text = "\n\n".join(cluster_blocks)
+            comment_blocks_text = "\n\n".join(comment_blocks)
+
+            # Add contrast-based reasoning - select high-purity and mixed clusters
+            high_purity_cluster = None
+            mixed_cluster = None
+
+            # Find clusters with different emotional purity
+            for cluster_id in selected_clusters.keys():
+                cluster_emotions = cluster_sentiment_map.get(cluster_id, [])
+                if cluster_emotions:
+                    emotion_counts = Counter(cluster_emotions)
+                    emotion_dist = {e: count/len(cluster_emotions) for e, count in emotion_counts.items()}
+                    entropy = self._calculate_entropy(emotion_dist.values())
+
+                    # Track the highest purity cluster for this emotion
+                    current_emotion_purity = emotion_dist.get(emotion, 0)
+                    if current_emotion_purity > 0.7:
+                        if not high_purity_cluster:
+                            high_purity_cluster = cluster_id
+                        else:
+                            # Compare with existing high_purity_cluster
+                            existing_emotion_purity = Counter(cluster_sentiment_map[high_purity_cluster]).get(emotion, 0) / len(cluster_sentiment_map[high_purity_cluster])
+                            if current_emotion_purity > existing_emotion_purity:
+                                high_purity_cluster = cluster_id
+                    elif entropy > 1.5:
+                        if not mixed_cluster:
+                            mixed_cluster = cluster_id
+                        else:
+                            # Compare with existing mixed_cluster
+                            existing_mixed_entropy = self._calculate_entropy(
+                                {e: count/len(cluster_sentiment_map[mixed_cluster]) for e, count in
+                                 Counter(cluster_sentiment_map[mixed_cluster]).items()}.values())
+                            if entropy > existing_mixed_entropy:
+                                mixed_cluster = cluster_id
+
+            contrast_info = ""
+            if high_purity_cluster and mixed_cluster:
+                high_purity_emotions = cluster_sentiment_map.get(high_purity_cluster, [])
+                mixed_emotions = cluster_sentiment_map.get(mixed_cluster, [])
+
+                contrast_info = f"""
+Compare these two groups:
+- One where the emotion is consistent (with {len(high_purity_emotions)} comments)
+- One where emotions are mixed (with {len(mixed_emotions)} comments)
+
+Explain what differentiates these viewers.
+"""
+
+            # Add special instructions for neutral emotion
+            neutral_instruction = ""
+            if emotion == "neutral" or raw_sentiment_dist.get("neutral", 0) >= 0.40:
+                neutral_instruction = """
+Neutral reactions are prominent.
+Focus on what this implies about:
+- emotional engagement
+- memorability
+- passive vs active viewing
+"""
 
             prompt = f"""
-We are analyzing viewer comments that all express the emotion: **{emotion}**.
-
-These comments come from different discussion clusters.
-Each cluster represents a different underlying reason for the same emotion.
-
-Your task:
-- Identify the main reasons why viewers feel this emotion
-- Explain how the reasons differ from each other
-- Treat each cluster as a separate cause, even if related
-
-Do NOT summarize all clusters into one reason.
-
-For each cluster:
-- Read the comments carefully
-- Infer the underlying issue or trigger
-- Give it a short descriptive label
+{comment_blocks_text}
 
 ---
 
-{cluster_blocks_text}
+{contrast_info}
 
----
+{neutral_instruction}
 
-Output format (strict JSON):
-{{
-  "emotion": "{emotion}",
-  "reasons": [
-    {{
-      "label": "Short reason label",
-      "explanation": "2–3 sentence explanation grounded in comments",
-      "relative_importance": "high | medium | low"
-    }}
-  ]
-}}
+{self.emotion_cluster_reason_prompt.format(EMOTION=emotion)}
 """
 
             try:
                 response = self._call_llm(prompt)  # Use new calling pattern
-                # Try to parse the response as JSON
-                import json as json_module
-                parsed_response = json_module.loads(response.strip())
-                results[emotion] = parsed_response
-            except (json_module.JSONDecodeError, ValueError) as e:
-                logger.warning(f"Failed to parse JSON for emotion {emotion}, retrying: {e}")
-                # Retry once
-                try:
-                    response = self._call_llm(prompt)
-                    parsed_response = json_module.loads(response.strip())
-                    results[emotion] = parsed_response
-                except (json_module.JSONDecodeError, ValueError) as e2:
-                    logger.error(f"Failed to parse JSON for emotion {emotion} after retry: {e2}")
-                    # Store fallback reason
-                    results[emotion] = {
-                        "emotion": emotion,
-                        "reasons": [
-                            {
-                                "label": "Unclear",
-                                "explanation": "The comments show mixed reasons without a dominant cause.",
-                                "relative_importance": "low"
-                            }
-                        ]
-                    }
+                # Store raw LLM output with confidence
+                confidence = self._calculate_emotion_confidence(emotion, raw_sentiment_dist.get(emotion, 0), len(selected_clusters))
+                results[emotion] = {
+                    "analysis_text": str(response),
+                    "confidence": confidence,
+                    "confidence_reason": self._get_confidence_reason(emotion, raw_sentiment_dist.get(emotion, 0), len(selected_clusters))
+                }
             except Exception as e:
                 logger.error(f"Error analyzing emotion {emotion}: {e}")
+                # Store fallback text with low confidence
                 results[emotion] = {
-                    "emotion": emotion,
-                    "reasons": [
-                        {
-                            "label": "Unclear",
-                            "explanation": "The comments show mixed reasons without a dominant cause.",
-                            "relative_importance": "low"
-                        }
-                    ]
+                    "analysis_text": "The comments show mixed signals without a dominant, clearly articulated reason.",
+                    "confidence": "low",
+                    "confidence_reason": "LLM call failed"
                 }
 
         return results
@@ -716,7 +729,7 @@ Emotional pattern:
                     'entropy': entropy
                 }
             except Exception as e:
-                logger.error(f"Error analyzing cluster {cluster_id}: {e}")
+                logger.warning(f"Error analyzing cluster {cluster_id}: {e}")
                 results[cluster_id] = {
                     'topic_label': f"Cluster {cluster_id}",
                     'summary': f"Error analyzing cluster {cluster_id}: {e}",
@@ -768,6 +781,10 @@ Emotional pattern:
             if clusters_with_emotion > len(cluster_sentiment_map) * 0.3:  # More than 30% of clusters
                 eligible_emotions.add(emotion)
 
+        # Rule 4: Elevate neutral emotion if >= 40% of comments
+        if raw_sentiment_dist.get('neutral', 0) >= 0.40:  # 40% threshold
+            eligible_emotions.add('neutral')
+
         # Cap at 8 emotions max
         return list(eligible_emotions)[:8]
 
@@ -803,15 +820,15 @@ Emotional pattern:
         return selected
 
 
-    def _calculate_cluster_sentiment_breakdown(self, cluster_sentiment_map: Dict) -> List[Dict]:
-        """Calculate per-cluster sentiment breakdown"""
-        cluster_breakdowns = []
+    def _calculate_theme_sentiment_breakdown(self, cluster_sentiment_map: Dict) -> List[Dict]:
+        """Calculate per-theme sentiment breakdown"""
+        theme_breakdowns = []
 
         for cluster_id, emotions in cluster_sentiment_map.items():
             if not emotions:
                 continue
 
-            # Calculate sentiment distribution for this cluster
+            # Calculate sentiment distribution for this theme
             total_emotions = len(emotions)
             emotion_counts = Counter(emotions)
             sentiment_breakdown = {emotion: round((count/total_emotions) * 100)
@@ -826,25 +843,25 @@ Emotional pattern:
             )
 
             # Determine confidence level
-            cluster_size = len(emotions)
-            if cluster_size >= 250 and entropy < 1.0:
+            theme_size = len(emotions)
+            if theme_size >= 250 and entropy < 1.0:
                 confidence = "high"
-            elif cluster_size >= 120 and entropy < 1.5:
+            elif theme_size >= 120 and entropy < 1.5:
                 confidence = "medium"
             else:
                 confidence = "low"
 
-            cluster_breakdowns.append({
-                "cluster_id": int(cluster_id),
-                "label": f"Cluster {cluster_id}",
-                "comment_count": cluster_size,
+            theme_breakdowns.append({
+                "cluster_id": int(cluster_id),  # Keep internal for mapping
+                "label": f"Theme {cluster_id}",  # Changed label to be theme-focused
+                "comment_count": theme_size,
                 "sentiment_breakdown": sentiment_breakdown,
                 "dominant_sentiment": dominant_sentiment,
                 "sentiment_entropy": round(entropy, 2),
                 "confidence": confidence
             })
 
-        return cluster_breakdowns
+        return theme_breakdowns
 
 
     def _generate_engagement_diagnostics(self, cluster_sentiment_map: Dict,
@@ -895,7 +912,7 @@ Polarizing clusters (emotionally diverse topics):
             response = self._call_llm(prompt)  # Use new calling pattern
             return str(response)
         except Exception as e:
-            logger.error(f"Error generating engagement diagnostics: {e}")
+            logger.warning(f"Error generating engagement diagnostics: {e}")
             return f"Error generating diagnostics: {e}"
 
     def _generate_actionable_insights(self, raw_sentiment_dist: Dict[str, float],
@@ -906,12 +923,18 @@ Polarizing clusters (emotionally diverse topics):
         if not self.llm:
             return "LLM not available for actionable insights"
 
-        # Create structured summaries from emotion analysis JSON to reduce token usage
+        # Create structured summaries from emotion analysis to reduce token usage
         # Focus on emotions and their reasons, not clusters
         emotion_summary = ""
         for emotion, analysis in list(emotion_analysis.items())[:3]:
-            if isinstance(analysis, dict) and "reasons" in analysis:
-                # Extract reasons from structured JSON
+            if isinstance(analysis, dict) and "analysis_text" in analysis:
+                # Handle new format with analysis_text - use first paragraph instead of truncation
+                analysis_text = analysis.get("analysis_text", "")
+                # Get first paragraph or first 2 sentences to keep reasoning intact
+                first_paragraph = analysis_text.split("\n")[0][:300] if "\n" in analysis_text else analysis_text.split(". ")[0][:300] if ". " in analysis_text else analysis_text[:300]
+                emotion_summary += f"- {emotion}: {first_paragraph}...\n"
+            elif isinstance(analysis, dict) and "reasons" in analysis:
+                # Extract reasons from structured JSON (fallback)
                 reasons = analysis.get("reasons", [])
                 if reasons:
                     # Create a summary from the top reasons
@@ -957,7 +980,7 @@ Output format:
             response = self._call_llm(prompt)  # Use new calling pattern
             return str(response)
         except Exception as e:
-            logger.error(f"Error generating actionable insights: {e}")
+            logger.warning(f"Error generating actionable insights: {e}")
             return f"Error generating insights: {e}"
 
     def _create_final_report(self, raw_sentiment_dist: Dict[str, float],
@@ -983,17 +1006,25 @@ This report presents viewer sentiment analysis with an emotion-first approach:
 ## 2. Key Emotional Drivers
 """
         for emotion, analysis in emotion_analysis.items():
-            report += f"""
+            if isinstance(analysis, dict) and "analysis_text" in analysis:
+                # Handle new format with analysis_text
+                report += f"""
+### Reasons for {emotion.capitalize()}
+{analysis['analysis_text']}
+"""
+            else:
+                report += f"""
 ### Reasons for {emotion.capitalize()}
 {analysis}
 """
 
         report += f"""
-## 3. Selected Topic Analysis
+## 3. Key Discussion Themes
 """
-        for cluster_id, analysis in cluster_analysis.items():
+        # Include only 3-4 topic summaries, no cluster IDs
+        for i, (cluster_id, analysis) in enumerate(list(cluster_analysis.items())[:4]):
             report += f"""
-### Cluster {cluster_id}
+### {analysis.get('topic_label', f'Discussion Theme {i+1}')}
 {analysis['summary']}
 """
 
@@ -1142,8 +1173,8 @@ Based on the analysis above, here are the recommended next steps:
             "dominant_topic_level": max(cluster_weighted_sentiment_dist, key=cluster_weighted_sentiment_dist.get) if cluster_weighted_sentiment_dist else "unknown"
         }
 
-        # Calculate cluster sentiment breakdowns
-        cluster_sentiment_stats = self._calculate_cluster_sentiment_breakdown(cluster_sentiment_map or {})
+        # Calculate theme sentiment breakdowns
+        theme_sentiment_stats = self._calculate_theme_sentiment_breakdown(cluster_sentiment_map or {})
 
         # Build emotions array (primary output object)
         emotions_array = []
@@ -1160,26 +1191,32 @@ Based on the analysis above, here are the recommended next steps:
 
             # Add reasons from emotion analysis if available
             emotion_analysis = emotion_cluster_analysis.get(emotion, {})
-            if isinstance(emotion_analysis, dict) and "reasons" in emotion_analysis:
-                emotion_data["reasons"] = emotion_analysis["reasons"]
+            if isinstance(emotion_analysis, dict):
+                # Handle new format with analysis_text and confidence
+                if "analysis_text" in emotion_analysis:
+                    emotion_data["summary"] = emotion_analysis["analysis_text"]
+                    emotion_data["confidence"] = emotion_analysis.get("confidence", emotion_data["confidence"])
+                    emotion_data["confidence_reason"] = emotion_analysis.get("confidence_reason", "")
+                elif "reasons" in emotion_analysis:  # Fallback for old format
+                    emotion_data["reasons"] = emotion_analysis["reasons"]
 
-                # Generate emotion summary from reasons
-                reasons = emotion_analysis.get("reasons", [])
-                if reasons:
-                    # Create a summary from the top reasons
-                    top_reasons = reasons[:3]  # Take top 3 reasons
-                    reason_labels = [reason.get("label", "Unknown reason") for reason in top_reasons]
-                    emotion_data["summary"] = (
-                        f"Viewers mainly feel {emotion} due to "
-                        f"{', '.join(reason_labels[:2])}."
-                    )
+                    # Generate emotion summary from reasons
+                    reasons = emotion_analysis.get("reasons", [])
+                    if reasons:
+                        # Create a summary from the top reasons
+                        top_reasons = reasons[:3]  # Take top 3 reasons
+                        reason_labels = [reason.get("label", "Unknown reason") for reason in top_reasons]
+                        emotion_data["summary"] = (
+                            f"Viewers mainly feel {emotion} due to "
+                            f"{', '.join(reason_labels[:2])}."
+                        )
 
             emotions_array.append(emotion_data)
 
         # Build summary_stats section
         summary_stats = {
             "overall_sentiment": overall_sentiment,
-            "cluster_sentiment_stats": cluster_sentiment_stats
+            "theme_sentiment_stats": theme_sentiment_stats
         }
 
         dashboard_json = {
@@ -1289,12 +1326,20 @@ Based on the analysis above, here are the recommended next steps:
             emotion = emotion_data.get('emotion', 'unknown')
             percentage = emotion_data.get('percentage', 0)
             confidence = emotion_data.get('confidence', 'low')
+            confidence_reason = emotion_data.get('confidence_reason', '')
 
-            md += f"## Emotion: {emotion.capitalize()} ({percentage}% - {confidence} confidence)\n\n"
+            md += f"## Emotion: {emotion.capitalize()} ({percentage}% - {confidence} confidence)\n"
+            if confidence_reason:
+                md += f"**Confidence reason:** {confidence_reason}\n\n"
 
             # Show reasons for this emotion
             reasons = emotion_data.get('reasons', [])
-            if reasons:
+            analysis_text = emotion_data.get('summary', '')
+
+            # Check if there's analysis text in the emotion data
+            if analysis_text:
+                md += f"**Analysis:** {analysis_text}\n\n"
+            elif reasons:
                 md += "### Why viewers feel this emotion\n"
                 for reason in reasons:
                     label = reason.get('label', 'Unknown reason')
@@ -1313,8 +1358,8 @@ Based on the analysis above, here are the recommended next steps:
             md += f"**Summary:** {topic['summary'][:200]}...\n\n"
 
             # Add per-topic sentiment breakdown
-            topic_stats = next((stat for stat in summary_stats.get('cluster_sentiment_stats', [])
-                                if stat['cluster_id'] == topic['cluster_id']), None)
+            topic_stats = next((stat for stat in summary_stats.get('theme_sentiment_stats', [])
+                                if stat.get('cluster_id') == topic.get('cluster_id')), None)
             if topic_stats:
                 sentiment_breakdown = topic_stats.get('sentiment_breakdown', {})
                 if sentiment_breakdown:
@@ -1326,7 +1371,7 @@ Based on the analysis above, here are the recommended next steps:
                 # Add interpretation
                 dominant_sentiment = topic_stats.get('dominant_sentiment', 'unknown')
                 md += f"**Interpretation:**\n"
-                md += f"This topic is primarily associated with {dominant_sentiment} sentiment.\n\n"
+                md += f"This theme is primarily associated with {dominant_sentiment} sentiment.\n\n"
 
             sample_comments = topic.get('sample_comments', {})
             if sample_comments.get('centroid'):
@@ -1350,6 +1395,25 @@ Based on the analysis above, here are the recommended next steps:
             md += f"- ⚠️ {risk['signal'][:100]}... ({risk['confidence'].title()} confidence)\n"
 
         return md
+
+    def _calculate_emotion_confidence(self, emotion: str, percentage: float, cluster_count: int) -> str:
+        """Calculate deterministic confidence for emotion analysis"""
+        # Calculate confidence based on percentage and cluster distribution
+        if percentage >= 0.10 and cluster_count <= 3:  # High percentage, few focused clusters
+            return "high"
+        elif percentage >= 0.05:  # At least 5% of comments
+            return "medium"
+        else:
+            return "low"
+
+    def _get_confidence_reason(self, emotion: str, percentage: float, cluster_count: int) -> str:
+        """Generate reason for confidence level"""
+        if percentage >= 0.10 and cluster_count <= 3:
+            return "Large percentage with focused reasons"
+        elif percentage >= 0.05:
+            return "Moderate percentage with multiple reasons"
+        else:
+            return "Low percentage of comments"
 
     def _get_overall_confidence(self, clusters):
         """Determine overall confidence based on cluster confidences"""
