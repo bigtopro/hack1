@@ -1,162 +1,113 @@
-# YouTube Comments Extractor
+# Comment Analysis Engine
 
-A comprehensive system for extracting comments from YouTube videos and generating embeddings with automatic deduplication and clustering. The system includes both Java-based comment extraction and Python-based embedding generation.
-
-## Features
-
-- **Direct YouTube video ID input**: Provide YouTube video IDs directly
-- **Multi-threaded comment extraction**: Fetches comments in parallel for efficiency
-- **API key management**: Rotates through multiple API keys with rate limiting
-- **Comment cleaning**: Removes URLs and normalizes comment text
-- **Reply inclusion**: Fetches both top-level comments and their replies
-- **Caching**: Caches video information to minimize API calls
-- **Embedding generation**: Creates semantic embeddings for comments using transformer models
-- **Automatic deduplication**: Removes similar comments using cosine similarity
-- **K-means clustering**: Groups similar comments using optimal cluster selection with silhouette analysis
-- **Distance-to-centroid computation**: Calculates distance from each comment to its cluster centroid
-- **Detailed progress logging**: Shows detailed progress during embedding, deduplication, and clustering
-- **Clustering summary JSON files**: Saves detailed clustering results as JSON files in the embed folder
-- **Google Colab integration**: Monitors Google Drive for new comment files and processes them automatically
-- **Sentiment classification**: Automatically classifies emotions in comments using the GoEmotions model with 27-class emotion detection
-
-## Prerequisites
-
-- Java 8 or higher
-- Maven
-- Python 3.7+
-- YouTube Data API v3 keys
+This project monitors the Downloads folder for clustering (.npz) and sentiment analysis (.json) files, then generates comprehensive insights using LLM-powered analysis.
 
 ## Setup
 
-1. Clone the repository
-2. Add your YouTube API keys to the `.env` file
-3. Add your YouTube video IDs to `videoList.txt` (one per line)
+### 1. Create Virtual Environment
 
-## Configuration
-
-### API Keys
-Add your YouTube Data API v3 keys to the `.env` file:
-```
-YOUTUBE_API_KEY_1=your_actual_api_key_here
-YOUTUBE_API_KEY_2=your_actual_api_key_here
-YOUTUBE_API_KEY_3=your_actual_api_key_here
-YOUTUBE_API_KEY_4=your_actual_api_key_here
-# Add more keys as needed (up to YOUTUBE_API_KEY_20)
-```
-
-### Auto-Embedding Configuration
-The auto-embedding script uses the following environment variables:
-```
-COMMENTS_DIR=/content/drive/My Drive/youtubeComments
-EMBEDDINGS_DIR=/content/drive/My Drive/youtubeComments/embed
-CHECK_INTERVAL=5
-```
-
-The system uses multiple API keys to handle rate limiting and quotas effectively. The more keys you provide, the more efficient the extraction process will be.
-
-## Usage
-
-### Extract Comments for a Single Video
-```bash
-mvn compile
-mvn exec:java -Dexec.mainClass="com.lucy.YouTubeCommentsExtractor" -Dexec.args="VIDEO_ID [OUTPUT_FILE]"
-```
-
-Example:
-```bash
-mvn exec:java -Dexec.mainClass="com.lucy.YouTubeCommentsExtractor" -Dexec.args="dQw4w9WgXcQ"
-```
-
-### Extract Comments for Multiple Videos
-Add video IDs to `videoList.txt` (one per line), then run:
-```bash
-mvn exec:java -Dexec.mainClass="com.lucy.YouTubeCommentsExtractor" -Dexec.args="videoList.txt"
-```
-
-### Generate Embeddings with Auto-Deduplication and Clustering
-Run the auto-embedding script in Google Colab to monitor a Google Drive folder and automatically generate embeddings for new comment files:
+Run the setup script to create a virtual environment with all required dependencies:
 
 ```bash
-python auto_embed_comments_final.py
+./setup.sh
 ```
 
-The script will:
-- Monitor the specified Google Drive folder for new comment JSON files
-- Generate semantic embeddings using the multilingual-e5-small model
-- Apply cosine-based deduplication to remove similar comments
-- Perform K-means clustering with silhouette-based optimal cluster selection
-- Compute distance-to-centroid for each comment
-- Save detailed clustering summary as JSON files in the embed folder
-- Show detailed progress logging during all processing steps
-- Save the processed embeddings to the output directory
+This will:
+- Create a virtual environment named `analysis_env`
+- Install all required packages
+- Set up the environment for running the analysis engine
 
-### Sentiment Classification with GoEmotions
-Run the sentiment classifier to automatically detect emotions in YouTube comments using the GoEmotions model:
+### 2. Configure API Key
+
+Copy the `.env` template and add your Groq API key:
 
 ```bash
-python sentiment_classifier.py
+cp .env .env.local
 ```
 
-The script will:
-- Monitor the Google Drive folder for new comment JSON files
-- Classify emotions using the AnasAlokla/multilingual_go_emotions model (27-class emotion detection)
-- Apply sigmoid-based multi-label classification for accurate emotion prediction
-- Save sentiment results as JSON files with emotion labels
-- Support dynamic label loading from model configuration
-- Process comments in batches for efficient GPU utilization
-
-### Other Utilities
-
-- `ApiKeyTester.java` - Test your YouTube API keys
-- `SampleCommentsAggregator.java` - Aggregate sampled comments from all files
-- `FindMissingComments.java` - Find videos without comment files
-- `TxtCommentsToJsonConverter.java` - Convert text files to JSON format
-- `DebugTest.java` - Debug the extraction pipeline
-
-## Output
-
-Comments are saved in the `comments/` directory as JSON files with the naming convention `{VIDEO_ID}_comments.json`. Each file contains an array of comment strings.
-
-Embeddings are saved as compressed `.npz` files with deduplication and clustering applied, containing:
-- Embedding vectors
-- Comment IDs
-- Cluster labels
-- Cluster centroids
-- Distance-to-centroid values
-
-Clustering summaries are saved as `.json` files in the embed folder with the same base name as the corresponding `.npz` file, containing:
-- Input/output file information
-- Total and deduplicated comment counts
-- Embedding dimension
-- Number of clusters and silhouette score
-- Cluster distribution
-- Processing timestamp
-- Clustering algorithm used
-
-## Project Structure
+Then edit `.env.local` and add your API key:
 
 ```
-src/
-├── main/java/com/lucy/
-│   ├── ApiKeyManager.java          # Manages YouTube API keys with rate limiting
-│   ├── ApiKeyTester.java           # Tests YouTube API keys
-│   ├── DebugTest.java              # Debugging utility
-│   ├── FindMissingComments.java    # Finds missing comment files
-│   ├── SampleCommentsAggregator.java # Aggregates sampled comments
-│   ├── TxtCommentsToJsonConverter.java # Converts text to JSON
-│   ├── VideoCache.java             # Caches video search results
-│   ├── YouTubeCommentsExtractor.java # Main extractor for YouTube videos
-│   ├── YouTubeSearchHelper.java    # YouTube video information helper
-│   └── YoutubeCommentScraper.java  # Core comment extraction
-auto_embed_comments_final.py        # Auto-embedding with deduplication and clustering for Google Colab
-sentiment_classifier.py             # Auto-sentiment classification using GoEmotions model
-README.md                         # This file
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
-## Files
+## Running the Analysis Engine
 
-- `videoList.txt` - Input file with YouTube video IDs (one per line)
-- `comments/` - Output directory for extracted comments
-- `.env` - Environment file for API keys (not committed to git)
-- `auto_embed_comments_final.py` - Auto-embedding script with deduplication and clustering for Google Colab
-- `sentiment_classifier.py` - Auto-sentiment classification script using GoEmotions model for emotion detection
+### 1. Activate Virtual Environment
+
+```bash
+source analysis_env/bin/activate
+```
+
+### 2. Run the Analysis Engine
+
+```bash
+python analysis_engine.py
+```
+
+The engine will start monitoring `/Users/venuvamsi/Downloads` (or your configured directory) for:
+- `.npz` files containing clustering data
+- `_sentiments.json` files containing sentiment analysis
+
+### 3. Testing with Files
+
+To test the engine:
+1. Place a `.npz` clustering file and a `_sentiments.json` file in your Downloads folder
+2. The engine will automatically detect them and start the analysis
+3. Once complete, a markdown report will be generated in the Downloads folder
+
+## Required File Formats
+
+### Clustering File (.npz)
+Must contain:
+- `embeddings`: Array of embeddings
+- `ids`: Deduplicated comment IDs
+- `labels`: K-means cluster labels
+- `centroids`: Cluster centroids
+- `distances`: Distances to centroids
+
+### Sentiment File (_sentiments.json)
+JSON array of objects with:
+```json
+[
+  {
+    "id": 1,
+    "comment": "Sample comment text",
+    "emotion": "joy"
+  }
+]
+```
+
+## Analysis Report Structure
+
+The generated report includes:
+1. Overall Viewer Sentiment (raw vs semantic)
+2. Key Emotional Drivers
+3. Topic-Level Emotional Impact
+4. Engagement Diagnostics
+5. Actionable Insights
+6. Recommendations
+
+## Dashboard Outputs
+
+The system now generates three synchronized outputs:
+
+1. **Full Analysis Report** (`analysis_report_*.md`)
+   - Deep narrative analysis
+   - Detailed insights and explanations
+
+2. **Dashboard JSON** (`analysis_dashboard_*.json`)
+   - Structured, UI-ready data
+   - Canonical analytics payload
+   - Confidence markers for all insights
+
+3. **Dashboard Markdown** (`analysis_dashboard_*.md`)
+   - Human-readable dashboard preview
+   - Mirrors UI content
+   - For review and QA
+
+All three outputs are generated from the same analysis run, ensuring consistency.
+
+## Stopping the Engine
+
+Press `Ctrl+C` to stop the monitoring process.
