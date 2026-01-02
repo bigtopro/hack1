@@ -399,19 +399,34 @@ class CommentEmbedder:
         with open(input_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
-        # Handle both array of strings and array of objects
+        # Handle both array of strings (v1) and array of objects (v2)
         comments = []
         comment_ids = []
 
         # Extract comments and their IDs (if present)
         for idx, item in enumerate(data):
-            if isinstance(item, dict) and 'comment' in item:
-                # Handle object format
-                comments.append(item['comment'])
-                comment_ids.append(item.get('id', idx))
+            if isinstance(item, dict):
+                # Handle object format (v2) - check if it has the metadata structure
+                if 'text' in item and 'id' in item:
+                    # This is the v2 format with metadata
+                    comments.append(item['text'])
+                    comment_ids.append(item['id'])
+                elif 'comment' in item:
+                    # This is the object format with 'comment' field
+                    comments.append(item['comment'])
+                    comment_ids.append(item.get('id', idx))
+                else:
+                    # Unknown object format, try to extract text
+                    text = item.get('text', item.get('comment', str(item)))
+                    comments.append(text)
+                    comment_ids.append(item.get('id', idx))
             elif isinstance(item, str):
-                # Handle string format
+                # Handle string format (v1)
                 comments.append(item)
+                comment_ids.append(idx)
+            else:
+                # Handle any other format by converting to string
+                comments.append(str(item))
                 comment_ids.append(idx)
 
         if not comments:

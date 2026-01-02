@@ -129,30 +129,63 @@ def extract_comments_view(request):
 @api_view(['GET'])
 def get_comments_view(request, video_id):
     """
-    Get comments for a specific video
-    
+    Get comments for a specific video (v1 format - text only)
+
     GET /api/comments/{video_id}/
     """
     comments_file = settings.COMMENTS_DIR / f"{video_id}_comments.json"
-    
+
     if not comments_file.exists():
         return Response(
             {'error': f'Comments not found for video {video_id}'},
             status=status.HTTP_404_NOT_FOUND
         )
-    
+
     comments = get_comments_from_file(comments_file)
-    
+
     if comments is None:
         return Response(
             {'error': 'Failed to read comments file'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
-    
+
     return Response({
         'video_id': video_id,
         'comment_count': len(comments),
         'comments': comments
+    })
+
+
+@api_view(['GET'])
+def get_comments_v2_view(request, video_id):
+    """
+    Get comments with metadata for a specific video (v2 format)
+
+    GET /api/comments/{video_id}/v2/
+    """
+    comments_file = settings.COMMENTS_DIR / f"{video_id}_comments_v2.json"
+
+    if not comments_file.exists():
+        # Try to fall back to v1 file and convert
+        comments_file = settings.COMMENTS_DIR / f"{video_id}_comments.json"
+        if not comments_file.exists():
+            return Response(
+                {'error': f'Comments not found for video {video_id}'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    comments_with_metadata = get_comments_with_metadata_from_file(comments_file)
+
+    if comments_with_metadata is None:
+        return Response(
+            {'error': 'Failed to read comments file'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    return Response({
+        'video_id': video_id,
+        'comment_count': len(comments_with_metadata),
+        'comments': comments_with_metadata
     })
 
 
@@ -296,33 +329,54 @@ def download_results_view(request, video_id):
 def sentiment_analysis_view(request, video_id):
     """
     Get sentiment analysis (27 emotions) for comments
-    
+
     GET /api/sentiment/{video_id}/
-    
+
     Query params:
     - cluster_id: Optional, filter by cluster
     - emotion: Optional, filter by emotion
+    - format: Optional, specify 'v1' (text only) or 'v2' (with metadata), defaults to 'v1'
     """
     try:
-        # Load comments
-        comments_file = settings.COMMENTS_DIR / f"{video_id}_comments.json"
+        # Determine format preference
+        format_version = request.query_params.get('format', 'v1')
+
+        # Load comments based on format
+        if format_version == 'v2':
+            comments_file = settings.COMMENTS_DIR / f"{video_id}_comments_v2.json"
+            if not comments_file.exists():
+                # Fall back to v1 if v2 doesn't exist
+                comments_file = settings.COMMENTS_DIR / f"{video_id}_comments.json"
+        else:
+            comments_file = settings.COMMENTS_DIR / f"{video_id}_comments.json"
+
         if not comments_file.exists():
             return Response({
                 'error': f'Comments not found for video {video_id}'
             }, status=status.HTTP_404_NOT_FOUND)
-        
-        comments = get_comments_from_file(comments_file)
-        if comments is None:
-            return Response({
-                'error': 'Failed to read comments file'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
+        # Get comments in the appropriate format
+        if format_version == 'v2':
+            comments_with_metadata = get_comments_with_metadata_from_file(comments_file)
+            if comments_with_metadata is None:
+                return Response({
+                    'error': 'Failed to read comments file'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Extract just the text for sentiment analysis
+            comments = [item['text'] for item in comments_with_metadata]
+        else:
+            comments = get_comments_from_file(comments_file)
+            if comments is None:
+                return Response({
+                    'error': 'Failed to read comments file'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
         # Load clustering results if available
         npz_file = settings.RESULTS_DIR / f"{video_id}_comments_embeddings.npz"
         cluster_data = None
         if npz_file.exists():
             cluster_data = load_npz_results(npz_file)
-        
+
         # Load sentiment results (expected to be in results folder or Drive)
         sentiment_file = settings.RESULTS_DIR / f"{video_id}_sentiment.json"
         sentiment_data = {}
@@ -350,7 +404,7 @@ def sentiment_analysis_view(request, video_id):
                         sentiment_data = load_sentiment_results(sentiment_file)
             except:
                 pass
-        
+
         # Map emotions to comments
         comment_ids = list(range(len(comments)))
         comments_with_emotions = map_emotions_to_comments(
@@ -358,13 +412,13 @@ def sentiment_analysis_view(request, video_id):
             comment_ids=comment_ids,
             sentiment_data=sentiment_data
         )
-        
+
         # Group by emotion
         comments_by_emotion = group_comments_by_emotion(comments_with_emotions)
-        
+
         # Analyze emotion reasons
         emotion_reasons = analyze_emotion_reasons(comments_by_emotion)
-        
+
         # Combine with clusters if available
         clusters_with_emotions = None
         if cluster_data:
@@ -372,21 +426,21 @@ def sentiment_analysis_view(request, video_id):
                 cluster_labels=cluster_data['labels'],
                 comments_with_emotions=comments_with_emotions
             )
-        
+
         # Filter by query params
         cluster_id = request.query_params.get('cluster_id')
         emotion_filter = request.query_params.get('emotion')
-        
+
         if cluster_id and clusters_with_emotions:
             clusters_with_emotions = {
-                k: v for k, v in clusters_with_emotions.items() 
+                k: v for k, v in clusters_with_emotions.items()
                 if k == int(cluster_id)
             }
-        
+
         if emotion_filter and emotion_filter in comments_by_emotion:
             comments_by_emotion = {emotion_filter: comments_by_emotion[emotion_filter]}
-        
-        return Response({
+
+        response_data = {
             'video_id': video_id,
             'total_comments': len(comments),
             'emotions': EMOTIONS_27,
@@ -399,9 +453,16 @@ def sentiment_analysis_view(request, video_id):
             },
             'emotion_reasons': emotion_reasons,
             'clusters_with_emotions': clusters_with_emotions,
-            'has_sentiment_data': len(sentiment_data) > 0
-        }, status=status.HTTP_200_OK)
-        
+            'has_sentiment_data': len(sentiment_data) > 0,
+            'format': format_version
+        }
+
+        # If v2 format was requested, include metadata in the response
+        if format_version == 'v2' and 'comments_with_metadata' in locals():
+            response_data['comments_metadata'] = comments_with_metadata
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
     except Exception as e:
         return Response({
             'error': str(e)

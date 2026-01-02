@@ -44,3 +44,11 @@ class SentimentAnalysisSerializer(serializers.Serializer):
     clusters_with_emotions = serializers.DictField()
     has_sentiment_data = serializers.BooleanField()
 
+
+class CommentWithMetadataSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    text = serializers.CharField()
+    publishedAt = serializers.CharField(required=False, allow_null=True)
+    likeCount = serializers.IntegerField()
+    parentId = serializers.CharField(required=False, allow_null=True)
+

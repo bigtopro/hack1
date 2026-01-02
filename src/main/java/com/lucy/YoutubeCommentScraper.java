@@ -92,16 +92,18 @@ public class YoutubeCommentScraper {
         int pageNumber;
         String pageToken;
         List<String> comments;
+        List<CommentWithMetadata> commentsWithMetadata;
 
-        CommentPage(int pageNumber, String pageToken, List<String> comments) {
+        CommentPage(int pageNumber, String pageToken, List<String> comments, List<CommentWithMetadata> commentsWithMetadata) {
             this.pageNumber = pageNumber;
             this.pageToken = pageToken;
             this.comments = comments;
+            this.commentsWithMetadata = commentsWithMetadata;
         }
     }
 
-    private static List<String> fetchAllReplies(CommentThread commentThread, ApiKeyManager apiKeyManager, YouTube youtubeService) throws InterruptedException {
-        List<String> replies = new ArrayList<>();
+    private static List<CommentWithMetadata> fetchAllRepliesWithMetadata(CommentThread commentThread, ApiKeyManager apiKeyManager, YouTube youtubeService) throws InterruptedException {
+        List<CommentWithMetadata> replies = new ArrayList<>();
         String parentId = commentThread.getSnippet().getTopLevelComment().getId();
         String pageToken = null;
         int maxRetries = 3;
@@ -128,7 +130,11 @@ public class YoutubeCommentScraper {
                     String comment = reply.getSnippet().getTextDisplay();
                     String cleaned = comment.replaceAll("https?://\\S+", "").trim().replaceAll("[\n\r]+", " ");
                     if (!cleaned.isEmpty()) {
-                        replies.add(cleaned);
+                        String replyId = reply.getId();
+                        String publishedAt = reply.getSnippet().getPublishedAt().toString();
+                        int likeCount = reply.getSnippet().getLikeCount().intValue();
+                        String parentReplyId = reply.getSnippet().getParentId();
+                        replies.add(new CommentWithMetadata(replyId, cleaned, publishedAt, likeCount, parentReplyId));
                     }
                 }
 
@@ -205,9 +211,17 @@ public class YoutubeCommentScraper {
                     continue;
                 } else if (e.getMessage() != null && e.getMessage().contains("commentsDisabled")) {
                     System.out.println("[INFO] Comments are disabled for this video. No comments to fetch.");
+                    // Create both v1 and v2 empty files
+                    try (Writer writer = new OutputStreamWriter(new FileOutputStream(outputFile), StandardCharsets.UTF_8)) {
+                        new GsonBuilder().setPrettyPrinting().create().toJson(new ArrayList<>(), writer);
+                    }
+                    String v2OutputFile = outputFile.replace("_comments.json", "_comments_v2.json");
+                    try (Writer writer = new OutputStreamWriter(new FileOutputStream(v2OutputFile), StandardCharsets.UTF_8)) {
+                        new GsonBuilder().setPrettyPrinting().create().toJson(new ArrayList<>(), writer);
+                    }
                     return;
                 } else {
-                    throw e; 
+                    throw e;
                 }
             }
         }
@@ -216,7 +230,7 @@ public class YoutubeCommentScraper {
 
         Queue<String> pageTokenQueue = new ConcurrentLinkedQueue<>();
         pageTokenQueue.addAll(allPageTokens); // all tokens are non-null ("" for first page)
-        
+
         PriorityBlockingQueue<CommentPage> completedPages = new PriorityBlockingQueue<>(
             allPageTokens.size(),
             Comparator.comparingInt(a -> a.pageNumber)
@@ -225,7 +239,7 @@ public class YoutubeCommentScraper {
         AtomicInteger processedPages = new AtomicInteger(0);
         ExecutorService executor = Executors.newFixedThreadPool(numThreads);
         AtomicBoolean hasError = new AtomicBoolean(false);
-        
+
         for (int i = 0; i < numThreads; i++) {
             final int threadId = i;
             executor.submit(() -> {
@@ -257,23 +271,33 @@ public class YoutubeCommentScraper {
 
                             CommentThreadListResponse response = request.execute();
                             List<String> pageComments = new ArrayList<>();
-                            
+                            List<CommentWithMetadata> pageCommentsWithMetadata = new ArrayList<>();
+
                             for (CommentThread thread : response.getItems()) {
+                                // Process top-level comment
                                 String comment = thread.getSnippet().getTopLevelComment().getSnippet().getTextDisplay();
                                 String cleaned = comment.replaceAll("https?://\\S+", "").trim().replaceAll("[\n\r]+", " ");
                                 if (!cleaned.isEmpty()) {
+                                    String commentId = thread.getSnippet().getTopLevelComment().getId();
+                                    String publishedAt = thread.getSnippet().getTopLevelComment().getSnippet().getPublishedAt().toString();
+                                    int likeCount = thread.getSnippet().getTopLevelComment().getSnippet().getLikeCount().intValue();
+                                    // Top-level comments have null parentId
                                     pageComments.add(cleaned);
+                                    pageCommentsWithMetadata.add(new CommentWithMetadata(commentId, cleaned, publishedAt, likeCount, null));
                                 }
 
                                 if (thread.getSnippet().getTotalReplyCount() > 0) {
-                                    List<String> replies = fetchAllReplies(thread, apiKeyManager, threadYoutubeService);
-                                    pageComments.addAll(replies);
+                                    List<CommentWithMetadata> replies = fetchAllRepliesWithMetadata(thread, apiKeyManager, threadYoutubeService);
+                                    for (CommentWithMetadata reply : replies) {
+                                        pageComments.add(reply.text);
+                                        pageCommentsWithMetadata.add(reply);
+                                    }
                                 }
                             }
 
                             int pageNum = processedPages.incrementAndGet();
-                            completedPages.add(new CommentPage(pageNum, token, pageComments));
-                            
+                            completedPages.add(new CommentPage(pageNum, token, pageComments, pageCommentsWithMetadata));
+
                             System.out.printf("[Thread-%d] Fetched page %d with %d comments (including replies) using key %s...%n",
                                 threadId, pageNum, pageComments.size(), currentKey.substring(0, 10));
 
@@ -302,14 +326,24 @@ public class YoutubeCommentScraper {
         }
 
         List<String> allComments = new ArrayList<>();
+        List<CommentWithMetadata> allCommentsWithMetadata = new ArrayList<>();
         while (!completedPages.isEmpty()) {
             CommentPage page = completedPages.poll();
             allComments.addAll(page.comments);
+            allCommentsWithMetadata.addAll(page.commentsWithMetadata);
         }
 
+        // Write v1 format (backward compatible)
         System.out.println("[INFO] Writing " + allComments.size() + " comments to " + outputFile);
         try (Writer writer = new OutputStreamWriter(new FileOutputStream(outputFile), StandardCharsets.UTF_8)) {
             new GsonBuilder().setPrettyPrinting().create().toJson(allComments, writer);
+        }
+
+        // Write v2 format (with metadata)
+        String v2OutputFile = outputFile.replace("_comments.json", "_comments_v2.json");
+        System.out.println("[INFO] Writing " + allCommentsWithMetadata.size() + " comments with metadata to " + v2OutputFile);
+        try (Writer writer = new OutputStreamWriter(new FileOutputStream(v2OutputFile), StandardCharsets.UTF_8)) {
+            new GsonBuilder().setPrettyPrinting().create().toJson(allCommentsWithMetadata, writer);
         }
     }
 }

@@ -51,7 +51,8 @@ public class YouTubeCommentsExtractor {
             // Extract comments
             System.out.println("Extracting comments for video: " + videoId);
             fetchCommentsForVideo(videoId, outputFile, apiKeyManager);
-            System.out.println("Comments saved to: " + outputFile);
+            String v2OutputFile = outputFile.replace("_comments.json", "_comments_v2.json");
+            System.out.println("Comments saved to: " + outputFile + " and " + v2OutputFile);
 
         } catch (Exception e) {
             System.err.println("Error extracting comments: " + e.getMessage());
@@ -63,11 +64,15 @@ public class YouTubeCommentsExtractor {
         // Check if comments are disabled for the video
         YouTubeSearchHelper searchHelper = new YouTubeSearchHelper(apiKeyManager);
         YouTubeSearchHelper.VideoInfo videoInfo = searchHelper.getVideoInfoById(videoId);
-        
+
         if (videoInfo.commentsDisabled) {
             System.out.println("Comments are disabled for video: " + videoId);
-            // Create an empty JSON array file
+            // Create both v1 and v2 empty JSON array files
             try (Writer writer = new OutputStreamWriter(new FileOutputStream(outputFile), StandardCharsets.UTF_8)) {
+                new GsonBuilder().setPrettyPrinting().create().toJson(new ArrayList<>(), writer);
+            }
+            String v2OutputFile = outputFile.replace("_comments.json", "_comments_v2.json");
+            try (Writer writer = new OutputStreamWriter(new FileOutputStream(v2OutputFile), StandardCharsets.UTF_8)) {
                 new GsonBuilder().setPrettyPrinting().create().toJson(new ArrayList<>(), writer);
             }
             return;

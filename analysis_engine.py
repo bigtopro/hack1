@@ -320,6 +320,24 @@ Output format:
         with open(sentiment_path, 'r') as f:
             sentiment_data = json.load(f)
 
+        # Ensure sentiment data is in the expected format with 'id' and 'comment' fields
+        processed_sentiment_data = []
+        for idx, item in enumerate(sentiment_data):
+            if isinstance(item, dict) and 'id' in item and 'comment' in item:
+                # Already in expected format
+                processed_sentiment_data.append(item)
+            elif isinstance(item, dict) and 'comment' in item:
+                # Add default id if missing
+                item_copy = item.copy()
+                if 'id' not in item_copy:
+                    item_copy['id'] = idx
+                processed_sentiment_data.append(item_copy)
+            else:
+                # Unexpected format, skip or handle appropriately
+                logger.warning(f"Unexpected sentiment data format at index {idx}: {item}")
+                continue
+        sentiment_data = processed_sentiment_data
+
         # Create mapping from cluster ID to sentiment (for semantic analysis)
         cluster_sentiment_map = defaultdict(list)
         cluster_comment_map = defaultdict(list)

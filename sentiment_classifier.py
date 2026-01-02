@@ -234,14 +234,35 @@ class SentimentClassifier:
         return results
 
 def load_comments_from_file(file_path: str) -> List[Dict[str, Any]]:
-    """Load comments from a JSON file"""
+    """Load comments from a JSON file, handling both v1 (string array) and v2 (object array) formats"""
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     if not isinstance(data, list):
         raise ValueError(f"Expected JSON array, got {type(data)}")
 
-    return data
+    # Convert v1 format (string array) to v2 format (object array) if needed
+    converted_data = []
+    for idx, item in enumerate(data):
+        if isinstance(item, dict):
+            # This is already v2 format or another object format
+            converted_data.append(item)
+        elif isinstance(item, str):
+            # This is v1 format (string array), convert to object format
+            converted_data.append({
+                "id": idx,
+                "comment": item,
+                "text": item  # Also include as text for compatibility
+            })
+        else:
+            # Handle any other format by converting to string
+            converted_data.append({
+                "id": idx,
+                "comment": str(item),
+                "text": str(item)
+            })
+
+    return converted_data
 
 def save_sentiment_results(results: List[Dict[str, Any]], output_path: str):
     """Save sentiment classification results to a JSON file"""
