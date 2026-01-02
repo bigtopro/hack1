@@ -571,12 +571,16 @@ def trigger_analysis_view(request, video_id):
         # Add the parent directory to the Python path to import analysis_engine
         parent_dir = Path(__file__).resolve().parent.parent.parent
         sys.path.insert(0, str(parent_dir))
-        
+
+        # Add analysis directory to the Python path to import analysis_engine
+        analysis_dir = parent_dir / "analysis"
+        sys.path.insert(0, str(analysis_dir))
+
         from analysis_engine import CommentAnalysisEngine
         
         # Find the required files for analysis
         # Look for .npz and _sentiments.json files
-        download_dir = Path("/Users/venuvamsi/Downloads")  # Default path from analysis_engine.py
+        download_dir = Path("/Users/venuvamsi/Downloads")  # Default path from analysis/analysis_engine.py
         results_dir = settings.RESULTS_DIR
         
         # Look for clustering file (.npz)
@@ -629,7 +633,7 @@ def trigger_analysis_view(request, video_id):
     except ImportError as e:
         return Response({
             "error": f"Failed to import analysis engine: {str(e)}",
-            "message": "Make sure analysis_engine.py is available in the project root",
+            "message": "Make sure analysis/analysis_engine.py is available in the project",
             "video_id": video_id
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     

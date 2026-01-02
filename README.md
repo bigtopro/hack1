@@ -2,6 +2,20 @@
 
 This project monitors the Downloads folder for clustering (.npz) and sentiment analysis (.json) files, then generates comprehensive insights using LLM-powered analysis.
 
+## Project Structure
+
+The project is organized into the following directories:
+
+- `analysis/` - Core analysis scripts and engines
+- `docs/` - Documentation and specification files
+- `tests/` - Test scripts and utilities
+- `scripts/` - Shell scripts for setup and execution
+- `django_api/` - Django backend API
+- `frontend/` - React frontend application
+- `src/` - Java source code for YouTube comment extraction
+- `comments/` - Generated comment files
+- `analysis results/` - Analysis output files
+
 ## Setup
 
 ### 1. Create Virtual Environment
@@ -9,7 +23,7 @@ This project monitors the Downloads folder for clustering (.npz) and sentiment a
 Run the setup script to create a virtual environment with all required dependencies:
 
 ```bash
-./setup.sh
+./scripts/setup.sh
 ```
 
 This will:
@@ -42,7 +56,7 @@ source analysis_env/bin/activate
 ### 2. Run the Analysis Engine
 
 ```bash
-python analysis_engine.py
+python analysis/analysis_engine.py
 ```
 
 The engine will start monitoring `/Users/venuvamsi/Downloads` (or your configured directory) for:
@@ -179,7 +193,7 @@ To run both the Django API backend and React frontend together:
 
 2. Run the fullstack application:
    ```bash
-   ./run_fullstack.sh
+   ./scripts/run_fullstack.sh
    ```
 
 This will start both servers:
